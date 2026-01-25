@@ -314,6 +314,8 @@ local VENDING_COINS_DEPOSIT = getNetRemote("deGzdggahhjo/ggzImj")
 local VENDING_CLOSE = getNetRemote("deGzdggahhjo/QaardducNrilqsmxdiotkewau")
 local VENDING_MODE = getNetRemote("deGzdggahhjo/rLPziSaNkyol")
 local CLIENT_REQUEST_22 = RS.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("client_request_22")
+local CLIENT_EAT_FOOD = RS.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("CLIENT_EAT_FOOD")
+local FETCH_ONLINE_ISLANDS = RS.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("FETCH_ONLINE_ISLANDS")
 
 local function GetBackpackItems()
 	local items = {}
@@ -1538,13 +1540,113 @@ registerConnection(UIS.JumpRequest:Connect(function()
 	end
 end))
 
-local MiscSection = MiscTab:CreateSection("Misc")
+local CombatSection = MiscTab:CreateSection("Combat")
+
+local noAimingSlowLoop = nil
+MiscTab:CreateToggle({
+	Name = "No Aiming Slow",
+	CurrentValue = false,
+	Flag = "NoAimingSlowToggle",
+	Callback = function(Value)
+		if Value then
+			noAimingSlowLoop = RunS.Stepped:Connect(function()
+				local aiming = LP:FindFirstChild("AimingWeapon")
+				if aiming and aiming.Value then
+					aiming.Value = false
+				end
+			end)
+			registerConnection(noAimingSlowLoop)
+		else
+			if noAimingSlowLoop then
+				noAimingSlowLoop:Disconnect()
+				noAimingSlowLoop = nil
+			end
+		end
+	end,
+})
+
+local FoodAutomationSection = MiscTab:CreateSection("Food Automation")
+
+local eatLoopEnabled = false
+local eatLoopThread = nil
+local eatLoopDelay = 0.1
+
+MiscTab:CreateToggle({
+	Name = "Loop Eat Held Item",
+	CurrentValue = false,
+	Flag = "EatLoopToggle",
+	Callback = function(Value)
+		eatLoopEnabled = Value
+		if eatLoopEnabled then
+			eatLoopThread = task.spawn(function()
+				while eatLoopEnabled do
+					pcall(function()
+						local char = LP.Character
+						if char then
+							local tool = char:FindFirstChildWhichIsA("Tool")
+							if tool then
+								CLIENT_EAT_FOOD:InvokeServer({tool = tool})
+							end
+						end
+					end)
+					task.wait(eatLoopDelay)
+				end
+			end)
+			registerLoop(eatLoopThread)
+		else
+			if eatLoopThread then
+				task.cancel(eatLoopThread)
+				eatLoopThread = nil
+			end
+		end
+	end,
+})
+
+MiscTab:CreateSlider({
+	Name = "Eat Loop Delay",
+	Range = {0.1, 900},
+	Increment = 0.1,
+	Suffix = " seconds",
+	CurrentValue = 0.1,
+	Flag = "EatLoopDelaySlider",
+	Callback = function(Value)
+		eatLoopDelay = Value
+	end,
+})
+
+local UICustomizationSection = MiscTab:CreateSection("UI Customization")
+
+MiscTab:CreateToggle({
+	Name = "Hardcore Mode UI",
+	CurrentValue = false,
+	Flag = "HardcoreModeToggle",
+	Callback = function(Value)
+		local hc = LP:FindFirstChild("HardcoreMode")
+		if hc then
+			hc.Value = Value
+		end
+	end,
+})
+
+MiscTab:CreateInput({
+	Name = "Join Code Spoofer",
+	CurrentValue = "",
+	PlaceholderText = "Enter code...",
+	RemoveTextAfterFocusLost = false,
+	Flag = "JoinCodeSpooferInput",
+	Callback = function(Text)
+		local jc = LP:FindFirstChild("JoinCode")
+		if jc then
+			jc.Value = Text
+		end
+	end,
+})
 
 MiscTab:CreateButton({
-	Name = "Kawaii Aura",
+	Name = "Fix PI List",
 	Callback = function()
 		pcall(function()
-			loadstring(game:HttpGet("https://raw.githubusercontent.com/hellohellohell012321/KAWAII-AURA/main/kawaii_aura.lua", true))()
+			FETCH_ONLINE_ISLANDS:InvokeServer()
 		end)
 	end,
 })
