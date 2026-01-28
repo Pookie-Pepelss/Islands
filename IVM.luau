@@ -39,6 +39,7 @@ CircleLines = CircleLines or {}
 local openingEnabled = openingEnabled or false
 local loopCoinEnabled = loopCoinEnabled or false
 local loopItemEnabled = loopItemEnabled or false
+local atmLoopEnabled = false
 releaseLabel = releaseLabel or function(lab) if lab and type(lab.Remove) == "function" then lab:Remove() end end
 UpdateDropdown = UpdateDropdown or function() end
 
@@ -90,6 +91,7 @@ local Window = Rayfield:CreateWindow({
 })
 
 local VendingTab = Window:CreateTab("Vending Managment", 6942650339)
+local ATMTab = Window:CreateTab("ATM", 14832381261)
 local OpeningTab = Window:CreateTab("Opening", 78111289121317)
 local MiscTab = Window:CreateTab("Misc", 136882854117051)
 local SettingsTab = Window:CreateTab("Settings", 7059346373)
@@ -106,13 +108,16 @@ local Backpack = LP:WaitForChild("Backpack")
 local withdrawLoopDelay = 0.2
 local vendingActionDelay = 0.001
 local coinLoopDelay = 0.3
+local atmLoopDelay = 0.1
 local vendingRadius = 15
 local vendingBoundingBoxCache = {}
 local selectedVendMode = 0
 local ItemMode = nil
 local CoinMode = nil
+local atmMode = "Deposit"
 local itemLoopGeneration = 0
 local coinLoopGeneration = 0
+local atmLoopGeneration = 0
 local coinActionInProgress = false
 local selectionModeEnabled = false
 local selectedVendingMachines = {}
@@ -312,6 +317,8 @@ local VENDING_COINS_WITHDRAW = getNetRemote("deGzdggahhjo/ytaJiyomainKgxefgrkF")
 local VENDING_COINS_DEPOSIT = getNetRemote("deGzdggahhjo/ggzImj")
 local VENDING_CLOSE = getNetRemote("deGzdggahhjo/QaardducNrilqsmxdiotkewau")
 local VENDING_MODE = getNetRemote("deGzdggahhjo/rLPziSaNkyol")
+local ATM_REMOTE = getNetRemote("TransactionBankBalance")
+local CHEST_TRANS = getNetRemote("CLIENT_CHEST_TRANSACTION")
 local CLIENT_REQUEST_22 = RS.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("client_request_22")
 local CLIENT_EAT_FOOD = RS.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("CLIENT_EAT_FOOD")
 
@@ -1135,7 +1142,7 @@ local Input = VendingTab:CreateInput({
 	end,
 })
 
-local ItemActionSection = VendingTab:CreateSection("Item Actions")
+local ItemActionSection = VendingTab:CreateSection("Vending Actions")
 
 local ItemModeDropdown = VendingTab:CreateDropdown({
 	Name = "Select Item Mode",
@@ -1409,6 +1416,89 @@ local CoinLoopDelaySlider = VendingTab:CreateSlider({
 	end,
 })
 
+local ATMSection = ATMTab:CreateSection("ATM Operations")
+
+local ATMInputValue = ""
+local ATMInput = ATMTab:CreateInput({
+	Name = "Amount",
+	CurrentValue = "",
+	PlaceholderText = "example: 1B",
+	RemoveTextAfterFocusLost = false,
+	Flag = "ATMInput",
+	Callback = function(Text)
+		ATMInputValue = Text
+	end,
+})
+
+local ATMModeDropdown = ATMTab:CreateDropdown({
+	Name = "Select ATM Mode",
+	Options = {"Deposit", "Withdraw"},
+	CurrentOption = {"Deposit"},
+	MultipleOptions = false,
+	Flag = "ATMModeDropdown",
+	Callback = function(Options)
+		atmMode = Options[1] or "Deposit"
+	end,
+})
+
+local function performAtmAction()
+    local amount = parseAmount(ATMInputValue)
+    if not (amount and amount > 0) then return end
+
+    local transferType = (atmMode == "Withdraw" and "WITHDRAWAL") or "DEPOSIT"
+    
+    local guid = HS:GenerateGUID(false)
+    ATM_REMOTE:FireServer(guid, {{
+        accountType = "PERSONAL",
+        transferType = transferType,
+        amount = amount
+    }})
+end
+
+local ATMActionButton = ATMTab:CreateButton({
+	Name = "Perform ATM Action",
+	Callback = performAtmAction
+})
+
+atmLoopThread = nil
+local LoopATMToggle = ATMTab:CreateToggle({
+	Name = "Loop ATM Action",
+	CurrentValue = false,
+	Flag = "LoopATMToggle",
+	Callback = function(Value)
+		atmLoopEnabled = Value
+		if Value then
+			atmLoopGeneration = atmLoopGeneration + 1
+			local myGen = atmLoopGeneration
+			atmLoopThread = task.spawn(function()
+				while atmLoopEnabled and myGen == atmLoopGeneration do
+					performAtmAction()
+					task.wait(atmLoopDelay)
+				end
+			end)
+			registerLoop(atmLoopThread)
+		else
+			atmLoopEnabled = false
+			if atmLoopThread then
+				task.cancel(atmLoopThread)
+				atmLoopThread = nil
+			end
+		end
+	end,
+})
+
+local ATMLoopDelaySlider = ATMTab:CreateSlider({
+	Name = "ATM Loop Delay",
+	Range = {0.1, 10},
+	Increment = 0.1,
+	Suffix = " seconds",
+	CurrentValue = atmLoopDelay,
+	Flag = "ATMLoopDelaySlider",
+	Callback = function(Value)
+		atmLoopDelay = Value
+	end,
+})
+
 local OpeningSection = OpeningTab:CreateSection("Present Opening")
 
 local openingSpeed = 0.1
@@ -1434,18 +1524,6 @@ local SpeedSlider = OpeningTab:CreateSlider({
 		openingSpeed = Value
 	end,
 })
-
-registerConnection(RunS.Heartbeat:Connect(function(deltaTime)
-	if openingEnabled then
-		lastOpeningTime = lastOpeningTime + deltaTime
-		if lastOpeningTime >= openingSpeed then
-			lastOpeningTime = 0
-			pcall(function()
-				CLIENT_REQUEST_22:InvokeServer({})
-			end)
-		end
-	end
-end))
 
 local CombatSection = MiscTab:CreateSection("Combat")
 
@@ -2199,8 +2277,10 @@ _G.VendingManagerCleanup = function()
 
 	pcall(function() if itemLoopThread then task.cancel(itemLoopThread) itemLoopThread = nil end end)
 	pcall(function() if coinLoopThread then task.cancel(coinLoopThread) coinLoopThread = nil end end)
+	pcall(function() if instantPromptsLoop then task.cancel(instantPromptsLoop) instantPromptsLoop = nil end end)
 	pcall(function() loopCoinEnabled = false end)
 	pcall(function() loopItemEnabled = false end)
+	pcall(function() instantPromptsEnabled = false end)
 	pcall(function() openingEnabled = false end)
 	pcall(function() espScannerActive = false end)
 
@@ -2232,6 +2312,15 @@ _G.VendingManagerCleanup = function()
 			for _, lab in ipairs(labelPool) do pcall(function() if lab and type(lab.Remove) == "function" then lab:Remove() end end) end
 		end
 		labelPool = {}
+	end)
+	
+	pcall(function()
+		local c = game:GetService("CoreGui"):FindFirstChild("VendingMachineListUI")
+		if c then c:Destroy() end
+		if gethui then
+			local h = gethui():FindFirstChild("VendingMachineListUI")
+			if h then h:Destroy() end
+		end
 	end)
 
 	pcall(function() if Window and type(Window.Destroy) == "function" then Window:Destroy() end end)
