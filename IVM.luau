@@ -159,6 +159,28 @@ local selectionBoxUpdateCounter = 0
 local allBackpackItems = {}
 local filteredItems = {}
 
+local ItemNameMap = {}
+local function formatItemName(name)
+	local newName = name:gsub("(%l)(%u)", "%1 %2")
+	newName = newName:sub(1,1):upper() .. newName:sub(2)
+	newName = newName:gsub("_", " ")
+	return newName
+end
+local function registerItemName(internal, instance)
+	local display
+	if instance then
+		local s, r = pcall(function() return instance.DisplayName end)
+		if s and r and type(r) == "string" and #r > 0 then
+			display = r
+		end
+	end
+	if not display then
+		display = formatItemName(internal)
+	end
+	ItemNameMap[display] = internal
+	return display
+end
+
 local function getVendingBoundingBox(vendingModel)
 	if not vendingModel then return nil end
 	if vendingBoundingBoxCache[vendingModel] then return vendingBoundingBoxCache[vendingModel] end
@@ -357,7 +379,8 @@ local function GetBackpackItems()
 	local seen = {}
 	for _, item in ipairs(Backpack:GetChildren()) do
 		if not seen[item.Name] then
-			table.insert(items, item.Name)
+			local display = registerItemName(item.Name, item)
+			table.insert(items, display)
 			seen[item.Name] = true
 		end
 	end
@@ -971,6 +994,8 @@ local Dropdown = VendingTab:CreateDropdown({
 	MultipleOptions = false,
 	Flag = "Dropdown1",
 	Callback = function(Options)
+		local display = Options[1] or "Empty"
+		selectedVendItem = ItemNameMap[display] or display
 	end,
 })
 
@@ -1028,13 +1053,15 @@ local ItemActionButton = VendingTab:CreateButton({
 	Name = "Perform Item Action (Radius)",
 	Callback = function()
 		if ItemMode == "Deposit" then
-			local selectedItem = Dropdown.CurrentOption and Dropdown.CurrentOption[1] or "Empty"
+			local display = Dropdown.CurrentOption and Dropdown.CurrentOption[1] or "Empty"
+			local selectedItem = ItemNameMap[display] or display
 			local amount = tonumber(ItemAmountValue) or 1
 			if selectedItem ~= "Empty" then
 				depositItemsInRadius(selectedItem, amount)
 			end
 		elseif ItemMode == "Deposit (Max)" then
-			local selectedItem = Dropdown.CurrentOption and Dropdown.CurrentOption[1] or "Empty"
+			local display = Dropdown.CurrentOption and Dropdown.CurrentOption[1] or "Empty"
+			local selectedItem = ItemNameMap[display] or display
 			if selectedItem ~= "Empty" then
 				local tool = Backpack:FindFirstChild(selectedItem)
 				if tool then
@@ -1064,13 +1091,15 @@ local LoopItemToggle = VendingTab:CreateToggle({
 			itemLoopThread = task.spawn(function()
 				while loopItemEnabled do
 					if ItemMode == "Deposit" then
-						local selectedItem = Dropdown.CurrentOption and Dropdown.CurrentOption[1] or "Empty"
+						local display = Dropdown.CurrentOption and Dropdown.CurrentOption[1] or "Empty"
+						local selectedItem = ItemNameMap[display] or display
 						local amount = tonumber(ItemAmountValue) or 1
 						if selectedItem ~= "Empty" then
 							depositItemsInRadius(selectedItem, amount, false, myGen)
 						end
 					elseif ItemMode == "Deposit (Max)" then
-						local selectedItem = Dropdown.CurrentOption and Dropdown.CurrentOption[1] or "Empty"
+						local display = Dropdown.CurrentOption and Dropdown.CurrentOption[1] or "Empty"
+						local selectedItem = ItemNameMap[display] or display
 						if selectedItem ~= "Empty" then
 							local tool = Backpack:FindFirstChild(selectedItem)
 							if tool then
@@ -1447,7 +1476,8 @@ local function getChestItemsCombined()
 	
 	for _, item in ipairs(Backpack:GetChildren()) do
 		if not seen[item.Name] then
-			table.insert(items, item.Name)
+			local display = registerItemName(item.Name, item)
+			table.insert(items, display)
 			seen[item.Name] = true
 		end
 	end
@@ -1458,7 +1488,8 @@ local function getChestItemsCombined()
 		if contents then
 			for _, item in ipairs(contents:GetChildren()) do
 				if not seen[item.Name] then
-					table.insert(items, item.Name)
+					local display = registerItemName(item.Name, item)
+					table.insert(items, display)
 					seen[item.Name] = true
 				end
 			end
@@ -1572,7 +1603,8 @@ ChestItemDropdown = ChestTab:CreateDropdown({
     CurrentOption = {"Empty"},
     MultipleOptions = false,
     Callback = function(Option)
-        selectedChestItem = Option[1]
+        local display = Option[1]
+        selectedChestItem = ItemNameMap[display] or display
     end,
 })
 pcall(function()
@@ -1700,30 +1732,73 @@ registerConnection(RunS.Heartbeat:Connect(function(deltaTime)
 	end
 end))
 
-local BypassesSection = MiscTab:CreateSection("Bypasses")
+local ModulesSection = MiscTab:CreateSection("Modules")
 
-local noAimingSlowLoop = nil
+local seedSpreaderEnabled = false
+local selectedSeed = "wheat"
+local seedCrops = {
+	"onion", "carrot", "wheat", "berryBush", "blackberryBush", "blueberryBush", "cactus", "candyCane", "chiliPepper", "cranberryBush", "crystallineIvy", "dragonfruit", "grape", "melon", "optuntia", "pineapple", "potato", "pumpkin", "radish", "raspberryBush", "rice", "seaweed", "spinach", "spirit", "starfruit", "strawberryBush", "tomato", "vineStem", "voidParasite"
+}
+local cropLookup = {}
+local formattedSeeds = {}
+local seedMap = {}
+
+for _, c in ipairs(seedCrops) do
+	cropLookup[c] = true
+	local display = formatItemName(c)
+	table.insert(formattedSeeds, display)
+	seedMap[display] = c
+end
+table.sort(formattedSeeds)
+
 MiscTab:CreateToggle({
-	Name = "No Aiming Slow",
+	Name = "Seed Spreader Override",
 	CurrentValue = false,
-	Flag = "NoAimingSlowToggle",
+	Flag = "SeedSpreaderToggle",
 	Callback = function(Value)
-		if Value then
-			noAimingSlowLoop = RunS.Stepped:Connect(function()
-				local aiming = LP:FindFirstChild("AimingWeapon")
-				if aiming and aiming.Value then
-					aiming.Value = false
-				end
-			end)
-			registerConnection(noAimingSlowLoop)
-		else
-			if noAimingSlowLoop then
-				noAimingSlowLoop:Disconnect()
-				noAimingSlowLoop = nil
-			end
-		end
+		seedSpreaderEnabled = Value
 	end,
 })
+
+MiscTab:CreateDropdown({
+	Name = "Select Seed",
+	Options = formattedSeeds,
+	CurrentOption = {formatItemName("wheat")},
+	MultipleOptions = false,
+	Callback = function(Option)
+		local display = Option[1]
+		selectedSeed = seedMap[display] or "wheat"
+	end,
+})
+
+task.spawn(function()
+	local mt = getrawmetatable(game)
+	local old_namecall = mt.__namecall
+	setreadonly(mt, false)
+
+	mt.__namecall = newcclosure(function(self, ...)
+		local method = getnamecallmethod()
+		local args = {...}
+
+		if method == "InvokeServer" and self.Name == "CLIENT_BLOCK_PLACE_REQUEST" and seedSpreaderEnabled then
+			local char = LP.Character
+			local tool = char and char:FindFirstChildWhichIsA("Tool")
+			if tool and string.find(string.lower(tool.Name), "seedspreader") and type(args[1]) == "table" then
+				local block = args[1].blockType
+				if block then
+					local clean = string.gsub(block, "_crop", "")
+					if cropLookup[block] or cropLookup[clean] then
+						args[1].blockType = selectedSeed
+					end
+				end
+			end
+		end
+
+		setnamecallmethod(method)
+		return old_namecall(self, unpack(args))
+	end)
+	setreadonly(mt, true)
+end)
 
 local originalSickleGetNearbyBlocks = nil
 MiscTab:CreateToggle({
@@ -2557,6 +2632,18 @@ _G.VendingManagerCleanup = function()
 	chestLoopEnabled = false
 	atmLoopEnabled = false
 	espScannerActive = false
+	seedSpreaderEnabled = false
+	eatLoopEnabled = false
+
+	if originalSickleGetNearbyBlocks then
+		local TS = RS:FindFirstChild("TS")
+		if TS then
+			local SickleUtilsModule = TS:FindFirstChild("tool") and TS.tool:FindFirstChild("tools") and TS.tool.tools:FindFirstChild("tool-utils") and TS.tool.tools["tool-utils"]:FindFirstChild("sickle-utils")
+			if SickleUtilsModule then
+				require(SickleUtilsModule).SickleUtils.getNearbyBlocks = originalSickleGetNearbyBlocks
+			end
+		end
+	end
 
 	if CircleLines then
 		for _, line in ipairs(CircleLines) do line:Remove() end
