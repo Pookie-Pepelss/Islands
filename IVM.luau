@@ -25,6 +25,68 @@ if _G.VendingManagerCleanup then
 	pcall(_G.VendingManagerCleanup)
 end
 
+local isExecutorCompatible = true
+local requiredFuncs = {"hookfunction", "hookmetamethod", "setnamecallmethod", "newcclosure", "getrawmetatable", "setreadonly"}
+
+local CompatibilityGui = Instance.new("ScreenGui")
+CompatibilityGui.Name = "CompatibilityCheckUI"
+if gethui then CompatibilityGui.Parent = gethui() else CompatibilityGui.Parent = game:GetService("CoreGui") end
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 300, 0, 100)
+MainFrame.Position = UDim2.new(0.5, -150, 0.5, -50)
+MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+MainFrame.BorderSizePixel = 0
+MainFrame.Parent = CompatibilityGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 40)
+Title.Position = UDim2.new(0, 0, 0, 10)
+Title.BackgroundTransparency = 1
+Title.Text = "Checking Compatibility..."
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 18
+Title.Parent = MainFrame
+
+local BarBg = Instance.new("Frame")
+BarBg.Size = UDim2.new(0.8, 0, 0, 6)
+BarBg.Position = UDim2.new(0.1, 0, 0.6, 0)
+BarBg.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+BarBg.BorderSizePixel = 0
+BarBg.Parent = MainFrame
+
+local BarCorner = Instance.new("UICorner")
+BarCorner.CornerRadius = UDim.new(1, 0)
+BarCorner.Parent = BarBg
+
+local BarFill = Instance.new("Frame")
+BarFill.Size = UDim2.new(0, 0, 1, 0)
+BarFill.BackgroundColor3 = Color3.fromRGB(0, 255, 150)
+BarFill.BorderSizePixel = 0
+BarFill.Parent = BarBg
+
+local FillCorner = Instance.new("UICorner")
+FillCorner.CornerRadius = UDim.new(1, 0)
+FillCorner.Parent = BarFill
+
+local TweenService = game:GetService("TweenService")
+TweenService:Create(BarFill, TweenInfo.new(1.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 1, 0)}):Play()
+
+task.wait(1.6)
+
+for _, func in ipairs(requiredFuncs) do
+	if not (getgenv and getgenv()[func]) and not _G[func] and not (debug and debug[func]) and type(getfenv()[func]) ~= "function" then
+		isExecutorCompatible = false
+	end
+end
+
+CompatibilityGui:Destroy()
+
 -- freecam
 loadstring(game:HttpGet("https://pastebin.com/raw/6ngxJT8b"))()
 
@@ -1751,54 +1813,63 @@ for _, c in ipairs(seedCrops) do
 end
 table.sort(formattedSeeds)
 
-MiscTab:CreateToggle({
-	Name = "Seed Spreader Override",
-	CurrentValue = false,
-	Flag = "SeedSpreaderToggle",
-	Callback = function(Value)
-		seedSpreaderEnabled = Value
-	end,
-})
+if isExecutorCompatible then
+	MiscTab:CreateToggle({
+		Name = "Seed Spreader Override",
+		CurrentValue = false,
+		Flag = "SeedSpreaderToggle",
+		Callback = function(Value)
+			seedSpreaderEnabled = Value
+		end,
+	})
 
-MiscTab:CreateDropdown({
-	Name = "Select Seed",
-	Options = formattedSeeds,
-	CurrentOption = {formatItemName("wheat")},
-	MultipleOptions = false,
-	Callback = function(Option)
-		local display = Option[1]
-		selectedSeed = seedMap[display] or "wheat"
-	end,
-})
+	MiscTab:CreateDropdown({
+		Name = "Select Seed",
+		Options = formattedSeeds,
+		CurrentOption = {formatItemName("wheat")},
+		MultipleOptions = false,
+		Callback = function(Option)
+			local display = Option[1]
+			selectedSeed = seedMap[display] or "wheat"
+		end,
+	})
 
-task.spawn(function()
-	local mt = getrawmetatable(game)
-	local old_namecall = mt.__namecall
-	setreadonly(mt, false)
+	task.spawn(function()
+		local mt = getrawmetatable(game)
+		local old_namecall = mt.__namecall
+		setreadonly(mt, false)
 
-	mt.__namecall = newcclosure(function(self, ...)
-		local method = getnamecallmethod()
-		local args = {...}
+		mt.__namecall = newcclosure(function(self, ...)
+			local method = getnamecallmethod()
+			local args = {...}
 
-		if method == "InvokeServer" and self.Name == "CLIENT_BLOCK_PLACE_REQUEST" and seedSpreaderEnabled then
-			local char = LP.Character
-			local tool = char and char:FindFirstChildWhichIsA("Tool")
-			if tool and string.find(string.lower(tool.Name), "seedspreader") and type(args[1]) == "table" then
-				local block = args[1].blockType
-				if block then
-					local clean = string.gsub(block, "_crop", "")
-					if cropLookup[block] or cropLookup[clean] then
-						args[1].blockType = selectedSeed
+			if method == "InvokeServer" and self.Name == "CLIENT_BLOCK_PLACE_REQUEST" and seedSpreaderEnabled then
+				local char = LP.Character
+				local tool = char and char:FindFirstChildWhichIsA("Tool")
+				if tool and string.find(string.lower(tool.Name), "seedspreader") and type(args[1]) == "table" then
+					local block = args[1].blockType
+					if block then
+						local clean = string.gsub(block, "_crop", "")
+						if cropLookup[block] or cropLookup[clean] then
+							args[1].blockType = selectedSeed
+						end
 					end
 				end
 			end
-		end
 
-		setnamecallmethod(method)
-		return old_namecall(self, unpack(args))
+			setnamecallmethod(method)
+			return old_namecall(self, unpack(args))
+		end)
+		setreadonly(mt, true)
 	end)
-	setreadonly(mt, true)
-end)
+else
+	MiscTab:CreateButton({
+		Name = "Executor Not Supported",
+		Callback = function()
+			Rayfield:Notify({Title = "Compatibility", Content = "Your executor is missing required functions.", Duration = 3})
+		end,
+	})
+end
 
 local originalSickleGetNearbyBlocks = nil
 MiscTab:CreateToggle({
