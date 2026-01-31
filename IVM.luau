@@ -25,7 +25,7 @@ if _G.VendingManagerCleanup then
 	pcall(_G.VendingManagerCleanup)
 end
 
-local isExecutorCompatible = true
+local isExecComp = true
 local requiredFuncs = {"hookfunction", "hookmetamethod", "setnamecallmethod", "newcclosure", "getrawmetatable", "setreadonly"}
 
 local CompatibilityGui = Instance.new("ScreenGui")
@@ -1866,7 +1866,7 @@ else
 	MiscTab:CreateButton({
 		Name = "Executor Not Supported",
 		Callback = function()
-			Rayfield:Notify({Title = "Compatibility", Content = "Your executor is missing required functions.", Duration = 3})
+			Rayfield:Notify({Title = "Compatibility", Content = "Your executor is missing required functions.", Image = 14563958666, Duration = 3})
 		end,
 	})
 end
