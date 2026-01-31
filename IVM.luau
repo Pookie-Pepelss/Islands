@@ -81,7 +81,7 @@ task.wait(1.6)
 
 for _, func in ipairs(requiredFuncs) do
 	if not (getgenv and getgenv()[func]) and not _G[func] and not (debug and debug[func]) and type(getfenv()[func]) ~= "function" then
-		isExecutorCompatible = false
+		isExecComp = false
 	end
 end
 
@@ -153,32 +153,6 @@ local Window = Rayfield:CreateWindow({
       Key = {"Hello"}
    }
 })
-
-inviteCode = "rdPZMvrAxm"
-
-local request = http_request or request or (syn and syn.request) or (http and http.request)
-
-if not request then
-	return
-end
-
-request(
-    {
-        Url = 'http://127.0.0.1:6463/rpc?v=1',
-        Method = 'POST',
-        Headers = {
-            ['Content-Type'] = 'application/json',
-            ['origin'] = 'https://discord.com',
-        },
-        Body = game:GetService('HttpService'):JSONEncode({
-            ["args"] = {
-                ['code'] = "",
-            },
-            ['cmd'] = 'INVITE_BROWSER',
-            ['nonce'] = '.',
-        });
-    }
-);
 
 local VendingTab = Window:CreateTab("Vending Managment", 6942650339)
 local ChestTab = Window:CreateTab("Chest", 99252073072597)
@@ -1813,7 +1787,7 @@ for _, c in ipairs(seedCrops) do
 end
 table.sort(formattedSeeds)
 
-if isExecutorCompatible then
+if isExecComp then
 	MiscTab:CreateToggle({
 		Name = "Seed Spreader Override",
 		CurrentValue = false,
