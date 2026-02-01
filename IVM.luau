@@ -26,7 +26,7 @@ if _G.VendingManagerCleanup then
 end
 
 local isExecComp = true
-local requiredFuncs = {"hookfunction", "hookmetamethod", "setnamecallmethod", "newcclosure", "getrawmetatable", "setreadonly"}
+local requiredFuncs = {"hookfunction", "hookmetamethod", "newcclosure", "getrawmetatable", "setreadonly"}
 
 local CompatibilityGui = Instance.new("ScreenGui")
 CompatibilityGui.Name = "CompatibilityCheckUI"
@@ -76,8 +76,6 @@ FillCorner.Parent = BarFill
 
 local TweenService = game:GetService("TweenService")
 TweenService:Create(BarFill, TweenInfo.new(1.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 1, 0)}):Play()
-
-task.wait(1.6)
 
 for _, func in ipairs(requiredFuncs) do
 	if not (getgenv and getgenv()[func]) and not _G[func] and not (debug and debug[func]) and type(getfenv()[func]) ~= "function" then
@@ -180,6 +178,7 @@ local maxSelectionBoxes = 20
 local maxVendingsPerCycle = 20
 
 local vendingBoundingBoxCache = {}
+local targetVendingMode = "All"
 local selectedVendMode = 0
 local ItemMode = nil
 local CoinMode = nil
@@ -503,6 +502,17 @@ local function getSortedVendingsInRadius()
 			if distSq > radiusSq then continue end
 			if not shouldOperateOnVending(v) then continue end
 
+			if targetVendingMode ~= "All" then
+				local m = v:GetAttribute("Mode")
+				if m == nil then
+					local modeVal = v:FindFirstChild("Mode")
+					if modeVal then m = modeVal.Value end
+				end
+				m = m or 0
+				if targetVendingMode == "Sell" and m ~= 0 then continue end
+				if targetVendingMode == "Buy" and m ~= 1 then continue end
+			end
+
 			table.insert(candidates, {v = v, dist = distSq})
 		end
 	end
@@ -789,11 +799,11 @@ local function depositCoinsIntoVending(depositAmount, showNotif, singleTransacti
 	local queue = {}
 	local sortedVendings = getSortedVendingsInRadius()
 	for _, v in ipairs(sortedVendings) do
-		if loopGen and loopGen ~= coinLoopGeneration then coinActionInProgress = false return end
+		if loopGen and loopGen ~= coinLoopGeneration then coinActionInProgress = false; return end
 		table.insert(queue, v)
 		if #queue >= maxVendingsPerCycle then break end
 	end
-	if #queue == 0 then coinActionInProgress = false return end
+	if #queue == 0 then coinActionInProgress = false; return end
 	local function processVending(v)
 		if loopGen and loopGen ~= coinLoopGeneration then return false end
 		local guid = HS:GenerateGUID(false)
@@ -1021,7 +1031,32 @@ local ScanButton = VendingTab:CreateButton({
 	end,
 })
 
+local FilterSection = VendingTab:CreateSection("Filters")
+
+local TargetModeDropdown = VendingTab:CreateDropdown({
+	Name = "Target Machine Mode",
+	Options = {"All", "Sell", "Buy"},
+	CurrentOption = {"All"},
+	MultipleOptions = false,
+	Flag = "TargetModeDropdown",
+	Callback = function(Options)
+		targetVendingMode = Options[1] or "All"
+	end,
+})
+
 local ItemSection = VendingTab:CreateSection("Item Selection")
+
+local ItemAmountValue = ""
+local Input = VendingTab:CreateInput({
+	Name = "Item Amount",
+	CurrentValue = "",
+	PlaceholderText = "1-1000",
+	RemoveTextAfterFocusLost = false,
+	Flag = "Input1",
+	Callback = function(Text)
+		ItemAmountValue = Text
+	end,
+})
 
 local Dropdown = VendingTab:CreateDropdown({
 	Name = "Select Item",
@@ -1060,19 +1095,7 @@ VendingTab:CreateButton({
 	end
 })
 
-local ItemAmountValue = ""
-local Input = VendingTab:CreateInput({
-	Name = "Item Amount",
-	CurrentValue = "",
-	PlaceholderText = "1-1000",
-	RemoveTextAfterFocusLost = false,
-	Flag = "Input1",
-	Callback = function(Text)
-		ItemAmountValue = Text
-	end,
-})
-
-local ItemActionSection = VendingTab:CreateSection("Vending Actions")
+local ItemActionSection = VendingTab:CreateSection("Item Actions")
 
 local ItemModeDropdown = VendingTab:CreateDropdown({
 	Name = "Select Item Mode",
@@ -1112,6 +1135,8 @@ local ItemActionButton = VendingTab:CreateButton({
 		end
 	end,
 })
+
+VendingTab:CreateDivider()
 
 itemLoopThread = nil
 
@@ -1267,6 +1292,8 @@ local CoinActionButton = VendingTab:CreateButton({
 	end,
 })
 
+VendingTab:CreateDivider()
+
 coinLoopThread = nil
 
 local LoopCoinToggle = VendingTab:CreateToggle({
@@ -1381,6 +1408,8 @@ local ATMActionButton = ATMTab:CreateButton({
 	Name = "Perform ATM Action",
 	Callback = performAtmAction
 })
+
+ATMTab:CreateDivider()
 
 atmLoopThread = nil
 local LoopATMToggle = ATMTab:CreateToggle({
@@ -1687,7 +1716,6 @@ ChestTab:CreateDropdown({
 
 local chestActionCooldown = false
 ChestTab:CreateButton({
-    Name = "Deposit",
 	Name = "Deposit (Radius)",
     Callback = function()
         if chestActionCooldown then return end
@@ -1696,6 +1724,8 @@ ChestTab:CreateButton({
         performChestAction()
     end,
 })
+
+ChestTab:CreateDivider()
 
 ChestTab:CreateToggle({
     Name = "Loop Deposit",
@@ -1768,6 +1798,167 @@ registerConnection(RunS.Heartbeat:Connect(function(deltaTime)
 	end
 end))
 
+local ChestOpenerSection = OpeningTab:CreateSection("Chest/Cauldron Opener")
+
+local chestOpenerEnabled = false
+local chestWalkEnabled = false
+local selectedOpenerType = "All"
+local openerTypes = {"All", "Cauldron", "Treasure Chest", "Dungeon Chest"}
+local openerLoopThread = nil
+
+OpeningTab:CreateDropdown({
+	Name = "Opener Type",
+	Options = openerTypes,
+	CurrentOption = {"All"},
+	MultipleOptions = false,
+	Callback = function(Option)
+		selectedOpenerType = Option[1]
+	end,
+})
+
+OpeningTab:CreateToggle({
+	Name = "Auto Open",
+	CurrentValue = false,
+	Callback = function(Value)
+		chestOpenerEnabled = Value
+		if Value then
+			openerLoopThread = task.spawn(function()
+				while chestOpenerEnabled do
+					local foundTarget = false
+					pcall(function()
+						local char = LP.Character
+						local hrp = char and char:FindFirstChild("HumanoidRootPart")
+						if hrp then
+							local bestTarget = nil
+							local bestDist = math.huge
+							
+							local islands = workspace:FindFirstChild("Islands")
+							if islands then
+								for _, island in ipairs(islands:GetChildren()) do
+									local blocks = island:FindFirstChild("Blocks")
+									if blocks then
+										for _, v in ipairs(blocks:GetChildren()) do
+											local name = v.Name
+											local isMatch = false
+											if selectedOpenerType == "All" then
+												if name:find("cauldron") or name:find("treasureChest") or name:find("dungeonChest") then
+													isMatch = true
+												end
+											elseif selectedOpenerType == "Cauldron" and name:find("cauldron") then
+												isMatch = true
+											elseif selectedOpenerType == "Treasure Chest" and name:find("treasureChest") then
+												isMatch = true
+											elseif selectedOpenerType == "Dungeon Chest" and name:find("dungeonChest") then
+												isMatch = true
+											end
+											
+											if isMatch then
+												local prompt = v:FindFirstChildWhichIsA("ProximityPrompt", true)
+												if prompt and prompt.Enabled then
+													local part = prompt.Parent
+													if part and part:IsA("Attachment") then part = part.Parent end
+													if part and part:IsA("Model") then
+														part = part.PrimaryPart or part:FindFirstChildWhichIsA("BasePart", true)
+													end
+													
+													if part and part:IsA("BasePart") then
+														local dist = (part.Position - hrp.Position).Magnitude
+														if dist < bestDist then
+															bestDist = dist
+															bestTarget = {prompt = prompt, part = part}
+														end
+													end
+												end
+											end
+										end
+									end
+								end
+							end
+							
+							if bestTarget then
+								foundTarget = true
+								if chestWalkEnabled then
+									local hum = char:FindFirstChild("Humanoid")
+									if hum then
+										hum:MoveTo(bestTarget.part.Position)
+										
+										local targetPos = bestTarget.part.Position
+										local myPos = hrp.Position
+										local dir = (targetPos - myPos) * Vector3.new(1, 0, 1)
+										
+										if dir.Magnitude > 1 then
+											dir = dir.Unit
+											local params = RaycastParams.new()
+											local filter = {char, bestTarget.part}
+											local targetModel = bestTarget.part:FindFirstAncestorOfClass("Model")
+											if targetModel then table.insert(filter, targetModel) end
+											params.FilterDescendantsInstances = filter
+											params.FilterType = Enum.RaycastFilterType.Exclude
+											local result = workspace:Raycast(myPos, dir * 4, params)
+											if result and result.Instance and result.Instance.CanCollide then
+												hum.Jump = true
+											end
+										end
+									end
+								end
+								
+								local dist = (bestTarget.part.Position - hrp.Position).Magnitude
+								if dist <= bestTarget.prompt.MaxActivationDistance + 2 then
+									if fireproximityprompt then
+										fireproximityprompt(bestTarget.prompt)
+									else
+										local oldHold = bestTarget.prompt.HoldDuration
+										bestTarget.prompt.HoldDuration = 0
+										bestTarget.prompt:InputHoldBegin()
+										task.wait()
+										bestTarget.prompt:InputHoldEnd()
+										bestTarget.prompt.HoldDuration = oldHold
+									end
+								end
+							end
+						end
+					end)
+
+					if not foundTarget then
+						local islands = workspace:FindFirstChild("Islands")
+						if islands then
+							local detected = false
+							local con = islands.DescendantAdded:Connect(function(desc)
+								if (desc.Name:find("cauldron") or desc.Name:find("treasureChest") or desc.Name:find("dungeonChest")) then
+									detected = true
+								end
+							end)
+							local start = tick()
+							while chestOpenerEnabled and not detected and (tick() - start < 1) do
+								task.wait(0.1)
+							end
+							con:Disconnect()
+						else
+							task.wait(1)
+						end
+					else
+						task.wait(0.1)
+					end
+				end
+			end)
+			registerLoop(openerLoopThread)
+		else
+			if openerLoopThread then
+				task.cancel(openerLoopThread)
+				openerLoopThread = nil
+			end
+		end
+	end,
+})
+
+OpeningTab:CreateToggle({
+	Name = "Walk to Target",
+	CurrentValue = false,
+	Callback = function(Value)
+		chestWalkEnabled = Value
+	end,
+})
+
 local ModulesSection = MiscTab:CreateSection("Modules")
 
 local seedSpreaderEnabled = false
@@ -1786,6 +1977,8 @@ for _, c in ipairs(seedCrops) do
 	seedMap[display] = c
 end
 table.sort(formattedSeeds)
+
+local original_namecall
 
 if isExecComp then
 	MiscTab:CreateToggle({
@@ -1810,11 +2003,13 @@ if isExecComp then
 
 	task.spawn(function()
 		local mt = getrawmetatable(game)
-		local old_namecall = mt.__namecall
+		original_namecall = mt.__namecall
 		setreadonly(mt, false)
 
 		mt.__namecall = newcclosure(function(self, ...)
 			local method = getnamecallmethod()
+			local method = getnamecallmethod and getnamecallmethod()
+			if not method then return original_namecall(self, ...) end
 			local args = {...}
 
 			if method == "InvokeServer" and self.Name == "CLIENT_BLOCK_PLACE_REQUEST" and seedSpreaderEnabled then
@@ -1831,8 +2026,10 @@ if isExecComp then
 				end
 			end
 
-			setnamecallmethod(method)
-			return old_namecall(self, unpack(args))
+			if setnamecallmethod then
+				setnamecallmethod(method)
+			end
+			return original_namecall(self, unpack(args))
 		end)
 		setreadonly(mt, true)
 	end)
@@ -2024,7 +2221,7 @@ MiscTab:CreateToggle({
 	end,
 })
 
-local SettingsSection = SettingsTab:CreateSection("Vending Machine Stuff")
+local SettingsSection = SettingsTab:CreateSection("Visuals")
 
 local CircleToggle = false
 local CircleSegments = 32
@@ -2486,6 +2683,50 @@ SettingsTab:CreateSlider({
 	end,
 })
 
+SettingsTab:CreateDivider()
+
+local originalPerformanceSettings = nil
+SettingsTab:CreateToggle({
+	Name = "Performance Mode",
+	CurrentValue = false,
+	Flag = "PerformanceModeToggle",
+	Callback = function(Value)
+		local Lighting = game:GetService("Lighting")
+		if Value then
+			if not originalPerformanceSettings then
+				originalPerformanceSettings = {
+					GlobalShadows = Lighting.GlobalShadows,
+					Technology = Lighting.Technology,
+					QualityLevel = settings().Rendering.QualityLevel,
+				}
+			end
+
+			Lighting.GlobalShadows = false
+			Lighting.Technology = Enum.Technology.Compatibility
+			settings().Rendering.QualityLevel = 1
+			for _, v in ipairs(workspace:GetDescendants()) do
+				if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Fire") or v:IsA("Smoke") or v:IsA("Sparkles") then
+					v.Enabled = false
+				end
+			end
+		else
+			if originalPerformanceSettings then
+				Lighting.GlobalShadows = originalPerformanceSettings.GlobalShadows
+				Lighting.Technology = originalPerformanceSettings.Technology
+				settings().Rendering.QualityLevel = originalPerformanceSettings.QualityLevel
+				for _, v in ipairs(workspace:GetDescendants()) do
+					if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Fire") or v:IsA("Smoke") or v:IsA("Sparkles") then
+						v.Enabled = true
+					end
+				end
+				originalPerformanceSettings = nil
+			end
+		end
+	end,
+})
+
+local ConfigSection = SettingsTab:CreateSection("Configuration")
+
 local ignoreRadiusEnabled = false
 
 local VendingRadiusSlider = SettingsTab:CreateSlider({
@@ -2609,46 +2850,6 @@ local SetSeasonButton = SettingsTab:CreateButton({
 	end,
 })
 
-local originalPerformanceSettings = nil
-SettingsTab:CreateToggle({
-	Name = "Performance Mode",
-	CurrentValue = false,
-	Flag = "PerformanceModeToggle",
-	Callback = function(Value)
-		local Lighting = game:GetService("Lighting")
-		if Value then
-			if not originalPerformanceSettings then
-				originalPerformanceSettings = {
-					GlobalShadows = Lighting.GlobalShadows,
-					Technology = Lighting.Technology,
-					QualityLevel = settings().Rendering.QualityLevel,
-				}
-			end
-
-			Lighting.GlobalShadows = false
-			Lighting.Technology = Enum.Technology.Compatibility
-			settings().Rendering.QualityLevel = 1
-			for _, v in ipairs(workspace:GetDescendants()) do
-				if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Fire") or v:IsA("Smoke") or v:IsA("Sparkles") then
-					v.Enabled = false
-				end
-			end
-		else
-			if originalPerformanceSettings then
-				Lighting.GlobalShadows = originalPerformanceSettings.GlobalShadows
-				Lighting.Technology = originalPerformanceSettings.Technology
-				settings().Rendering.QualityLevel = originalPerformanceSettings.QualityLevel
-				for _, v in ipairs(workspace:GetDescendants()) do
-					if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Fire") or v:IsA("Smoke") or v:IsA("Sparkles") then
-						v.Enabled = true
-					end
-				end
-				originalPerformanceSettings = nil
-			end
-		end
-	end,
-})
-
 local SettingsSection = SettingsTab:CreateSection("Danger Zone")
 
 _G.VendingManagerCleanup = function()
@@ -2674,11 +2875,20 @@ _G.VendingManagerCleanup = function()
 	loopCoinEnabled = false
 	loopItemEnabled = false
 	openingEnabled = false
+	chestOpenerEnabled = false
 	chestLoopEnabled = false
 	atmLoopEnabled = false
 	espScannerActive = false
 	seedSpreaderEnabled = false
 	eatLoopEnabled = false
+
+	if original_namecall then
+		local mt = getrawmetatable(game)
+		setreadonly(mt, false)
+		mt.__namecall = original_namecall
+		setreadonly(mt, true)
+		original_namecall = nil
+	end
 
 	if originalSickleGetNearbyBlocks then
 		local TS = RS:FindFirstChild("TS")
