@@ -25,57 +25,36 @@ if _G.VendingManagerCleanup then
 	pcall(_G.VendingManagerCleanup)
 end
 
+task.spawn(function()
+	pcall(function()
+		local ReplicatedStorage = game:GetService("ReplicatedStorage")
+		local TS = ReplicatedStorage:WaitForChild("TS", 10)
+		if not TS then return end
+
+		local BlockMetaModule = TS:WaitForChild("block"):WaitForChild("block-meta")
+		if not BlockMetaModule then return end
+
+		local BlockMeta = require(BlockMetaModule).BlockMeta
+		if not BlockMeta then return end
+
+		if BlockMeta["cactus"] then
+			BlockMeta["cactus"].placeOnSoil = false
+			BlockMeta["cactus"].lockPlacedOn = nil
+		end
+
+		for blockName, meta in pairs(BlockMeta) do
+			if blockName ~= "cactus" and meta and meta.logicTags and table.find(meta.logicTags, "crop-logic") then
+				meta.placeOnSoil = true
+				if meta.lockPlacedOn then
+					meta.lockPlacedOn = nil
+				end
+			end
+		end
+	end)
+end)
+
 local isExecComp = true
 local requiredFuncs = {"hookfunction", "hookmetamethod", "newcclosure", "getrawmetatable", "setreadonly"}
-
-local CompatibilityGui = Instance.new("ScreenGui")
-CompatibilityGui.Name = "CompatibilityCheckUI"
-if gethui then CompatibilityGui.Parent = gethui() else CompatibilityGui.Parent = game:GetService("CoreGui") end
-
-local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 300, 0, 100)
-MainFrame.Position = UDim2.new(0.5, -150, 0.5, -50)
-MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
-MainFrame.BorderSizePixel = 0
-MainFrame.Parent = CompatibilityGui
-
-local UICorner = Instance.new("UICorner")
-UICorner.CornerRadius = UDim.new(0, 8)
-UICorner.Parent = MainFrame
-
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, 0, 0, 40)
-Title.Position = UDim2.new(0, 0, 0, 10)
-Title.BackgroundTransparency = 1
-Title.Text = "Checking Compatibility..."
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.Font = Enum.Font.GothamBold
-Title.TextSize = 18
-Title.Parent = MainFrame
-
-local BarBg = Instance.new("Frame")
-BarBg.Size = UDim2.new(0.8, 0, 0, 6)
-BarBg.Position = UDim2.new(0.1, 0, 0.6, 0)
-BarBg.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
-BarBg.BorderSizePixel = 0
-BarBg.Parent = MainFrame
-
-local BarCorner = Instance.new("UICorner")
-BarCorner.CornerRadius = UDim.new(1, 0)
-BarCorner.Parent = BarBg
-
-local BarFill = Instance.new("Frame")
-BarFill.Size = UDim2.new(0, 0, 1, 0)
-BarFill.BackgroundColor3 = Color3.fromRGB(0, 255, 150)
-BarFill.BorderSizePixel = 0
-BarFill.Parent = BarBg
-
-local FillCorner = Instance.new("UICorner")
-FillCorner.CornerRadius = UDim.new(1, 0)
-FillCorner.Parent = BarFill
-
-local TweenService = game:GetService("TweenService")
-TweenService:Create(BarFill, TweenInfo.new(1.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(1, 0, 1, 0)}):Play()
 
 for _, func in ipairs(requiredFuncs) do
 	if not (getgenv and getgenv()[func]) and not _G[func] and not (debug and debug[func]) and type(getfenv()[func]) ~= "function" then
@@ -83,17 +62,15 @@ for _, func in ipairs(requiredFuncs) do
 	end
 end
 
-CompatibilityGui:Destroy()
-
 -- freecam
 loadstring(game:HttpGet("https://pastebin.com/raw/6ngxJT8b"))()
 
 Window = Window or nil
 Rayfield = Rayfield or nil
 labelPool = labelPool or {}
-espLabels = espLabels or {}
-espCache = espCache or {}
-selectionBoxLines = selectionBoxLines or {}
+espLabels = espLabels or setmetatable({}, {__mode = "k"})
+espCache = espCache or setmetatable({}, {__mode = "k"})
+selectionBoxLines = selectionBoxLines or setmetatable({}, {__mode = "k"})
 selectedVendingMachines = selectedVendingMachines or {}
 setmetatable(selectedVendingMachines, {__mode = "k"})
 CircleLines = CircleLines or {}
@@ -110,11 +87,28 @@ local activeConnections = {}
 local activeLoops = {}
 
 local function registerConnection(conn)
+	for i = #activeConnections, 1, -1 do
+		local c = activeConnections[i]
+		if not c then
+			table.remove(activeConnections, i)
+		else
+			local success, connected = pcall(function() return c.Connected end)
+			if success and not connected then
+				table.remove(activeConnections, i)
+			end
+		end
+	end
 	table.insert(activeConnections, conn)
 	return conn
 end
 
 local function registerLoop(thread)
+	for i = #activeLoops, 1, -1 do
+		local t = activeLoops[i]
+		if not t or coroutine.status(t) == "dead" then
+			table.remove(activeLoops, i)
+		end
+	end
 	table.insert(activeLoops, thread)
 	return thread
 end
@@ -202,17 +196,51 @@ local function formatItemName(name)
 	newName = newName:gsub("_", " ")
 	return newName
 end
-local function registerItemName(internal, instance)
+
+local function formatNumber(num)
+	if num >= 1_000_000_000_000 then
+		return string.format("%.1f", num / 1_000_000_000_000) .. "T"
+	elseif num >= 1_000_000_000 then
+		return string.format("%.1f", num / 1_000_000_000) .. "B"
+	elseif num >= 1_000_000 then
+		return string.format("%.1f", num / 1_000_000) .. "M"
+	elseif num >= 1_000 then
+		return string.format("%.1f", num / 1_000) .. "K"
+	else
+		return tostring(math.floor(num))
+	end
+end
+
+local function registerItemName(internal, arg)
 	local display
-	if instance then
-		local s, r = pcall(function() return instance.DisplayName end)
-		if s and r and type(r) == "string" and #r > 0 then
-			display = r
+	local tools = RS:FindFirstChild("Tools")
+	local tool = tools and tools:FindFirstChild(internal)
+	if tool then
+		local dn = tool:FindFirstChild("DisplayName")
+		if dn and dn:IsA("StringValue") then
+			display = dn.Value
 		end
 	end
 	if not display then
 		display = formatItemName(internal)
 	end
+	
+	local amount = 0
+	if type(arg) == "number" then
+		amount = arg
+	elseif typeof(arg) == "Instance" then
+		local v = arg:FindFirstChild("Amount") or arg:FindFirstChild("Value")
+		if v and (v:IsA("IntValue") or v:IsA("NumberValue")) then
+			amount = v.Value
+		else
+			amount = 1
+		end
+	end
+
+	if amount > 1 then
+		display = display .. " (" .. formatNumber(amount) .. ")"
+	end
+
 	ItemNameMap[display] = internal
 	return display
 end
@@ -411,15 +439,22 @@ local CLIENT_REQUEST_22 = RS.rbxts_include.node_modules["@rbxts"].net.out._NetMa
 local CLIENT_EAT_FOOD = RS.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("CLIENT_EAT_FOOD")
 
 local function GetBackpackItems()
-	local items = {}
-	local seen = {}
+	table.clear(ItemNameMap)
+	local counts = {}
 	for _, item in ipairs(Backpack:GetChildren()) do
-		if not seen[item.Name] then
-			local display = registerItemName(item.Name, item)
-			table.insert(items, display)
-			seen[item.Name] = true
+		local amt = 1
+		local val = item:FindFirstChild("Amount") or item:FindFirstChild("Value")
+		if val and (val:IsA("IntValue") or val:IsA("NumberValue")) then
+			amt = val.Value
 		end
+		counts[item.Name] = (counts[item.Name] or 0) + amt
 	end
+
+	local items = {}
+	for name, count in pairs(counts) do
+		table.insert(items, registerItemName(name, count))
+	end
+	
 	table.sort(items)
 	return #items > 0 and items or {"Empty"}
 end
@@ -440,20 +475,6 @@ local function parseAmount(txt)
 		return math.floor(num * 1_000_000_000)
 	else
 		return math.floor(num)
-	end
-end
-
-local function formatNumber(num)
-	if num >= 1_000_000_000_000 then
-		return string.format("%.1f", num / 1_000_000_000_000) .. "T"
-	elseif num >= 1_000_000_000 then
-		return string.format("%.1f", num / 1_000_000_000) .. "B"
-	elseif num >= 1_000_000 then
-		return string.format("%.1f", num / 1_000_000) .. "M"
-	elseif num >= 1_000 then
-		return string.format("%.1f", num / 1_000) .. "K"
-	else
-		return tostring(math.floor(num))
 	end
 end
 
@@ -796,7 +817,7 @@ local function depositCoinsIntoVending(depositAmount, showNotif, singleTransacti
 	if coinActionInProgress then return end
 	coinActionInProgress = true
 	local processed = 0
-	local MAX_VENDING_CAPACITY = 5_000_000_000
+	local maxvendingcapacity = 5_000_000_000
 	local queue = {}
 	local sortedVendings = getSortedVendingsInRadius()
 	for _, v in ipairs(sortedVendings) do
@@ -816,7 +837,7 @@ local function depositCoinsIntoVending(depositAmount, showNotif, singleTransacti
 		local vendingCoinBalance = v:FindFirstChild("CoinBalance")
 		local currentBalance = vendingCoinBalance and vendingCoinBalance.Value or 0
 		local playerCoins = LP:GetAttribute("Coins") or 0
-		if currentBalance >= MAX_VENDING_CAPACITY and vendingCoinBalance then
+		if currentBalance >= maxvendingcapacity and vendingCoinBalance then
 			closeVendingSession(v)
 			return false
 		end
@@ -825,7 +846,7 @@ local function depositCoinsIntoVending(depositAmount, showNotif, singleTransacti
 			return false
 		end
 
-		local spaceAvailable = MAX_VENDING_CAPACITY - currentBalance
+		local spaceAvailable = maxvendingcapacity - currentBalance
 		local amountToDeposit = 0
 		if depositAmount and depositAmount > 0 then
 			amountToDeposit = math.min(depositAmount, spaceAvailable, playerCoins)
@@ -1817,7 +1838,7 @@ local openerTypes = {"All", "Cauldron", "Treasure Chest", "Dungeon Chest", "Serp
 local openerLoopThread = nil
 
 OpeningTab:CreateDropdown({
-	Name = "Opener Type",
+	Name = "Openable Type",
 	Options = openerTypes,
 	CurrentOption = {"All"},
 	MultipleOptions = false,
@@ -1933,26 +1954,7 @@ OpeningTab:CreateToggle({
 						end
 					end)
 
-					if not foundTarget then
-						local islands = workspace:FindFirstChild("Islands")
-						if islands then
-							local detected = false
-							local con = islands.DescendantAdded:Connect(function(desc)
-								if (desc.Name:find("cauldron") or desc.Name:find("treasureChest") or desc.Name:find("dungeonChest") or desc.Name:find("serpentEgg") or desc.Name:find("dragonEgg")) then
-									detected = true
-								end
-							end)
-							local start = tick()
-							while chestOpenerEnabled and not detected and (tick() - start < 1) do
-								task.wait(0.1)
-							end
-							con:Disconnect()
-						else
-							task.wait(1)
-						end
-					else
-						task.wait(0.1)
-					end
+					task.wait(0.1)
 				end
 			end)
 			registerLoop(openerLoopThread)
@@ -1966,7 +1968,7 @@ OpeningTab:CreateToggle({
 })
 
 OpeningTab:CreateToggle({
-	Name = "Walk to Target",
+	Name = "Walk to Openable",
 	CurrentValue = false,
 	Callback = function(Value)
 		chestWalkEnabled = Value
@@ -2032,10 +2034,7 @@ if isExecComp then
 				if tool and string.find(string.lower(tool.Name), "seedspreader") and type(args[1]) == "table" then
 					local block = args[1].blockType
 					if block then
-						local clean = string.gsub(block, "_crop", "")
-						if cropLookup[block] or cropLookup[clean] then
-							args[1].blockType = selectedSeed
-						end
+						args[1].blockType = selectedSeed
 					end
 				end
 			end
@@ -2082,11 +2081,11 @@ MiscTab:CreateToggle({
 			local ArrayUtil = require(ArrayUtilModule).ArrayUtil
 			local BlockUtils = require(BlockUtilsModule).BlockUtils
 
-			local OVERRIDE_RADIUS = 10
-			local OVERRIDE_LIMIT = 100
+			local overrideradius = 10
+			local overridelimit = 100
 
 			SickleUtils.SickleUtils.getNearbyBlocks = function(position, config)
-				local regionSize = Vector3.new(OVERRIDE_RADIUS * 2, OVERRIDE_RADIUS * 2, OVERRIDE_RADIUS * 2)
+				local regionSize = Vector3.new(overrideradius * 2, overrideradius * 2, overrideradius * 2)
 				local cframe = CFrame.new(position)
 				local overlapParams = OverlapParams.new()
 				
@@ -2144,7 +2143,7 @@ MiscTab:CreateToggle({
 					end
 				end
 				
-				return ArrayUtil.sortReduced(foundBlocks, OVERRIDE_LIMIT, function(a, b)
+				return ArrayUtil.sortReduced(foundBlocks, overridelimit, function(a, b)
 					local distA = a.Position - position
 					local distB = b.Position - position
 					return distA:Dot(distA) < distB:Dot(distB)
@@ -2275,53 +2274,47 @@ MiscTab:CreateButton({
 local SettingsSection = SettingsTab:CreateSection("Visuals")
 
 local CircleToggle = false
-local CircleSegments = 32
-local CircleColor = Color3.fromRGB(200, 150, 255)
-local CircleThickness = 3
-local CircleRadius = vendingRadius
-local CircleHeightOffset = 0.5
-local CircleUpdateCounter = 0
-
 local CircleLines = {}
+local CircleSegments = 40
 for i = 1, CircleSegments do
 	local line = Drawing.new("Line")
 	line.Visible = false
-	line.Color = CircleColor
-	line.Thickness = CircleThickness
+	line.Color = Color3.fromRGB(0, 255, 100)
+	line.Thickness = 2
+	line.Transparency = 1
 	table.insert(CircleLines, line)
 end
 
 local function UpdateCircle()
-	if not CircleToggle then return end
-	if not LP.Character or not LP.Character:FindFirstChild("HumanoidRootPart") then return end
-	
-	CircleUpdateCounter = CircleUpdateCounter + 1
-	if CircleUpdateCounter < 2 then return end
-	CircleUpdateCounter = 0
-	
-	local hrp = LP.Character.HumanoidRootPart
-	local center = hrp.Position + Vector3.new(0, CircleHeightOffset, 0)
+	if not CircleToggle then
+		for _, line in ipairs(CircleLines) do line.Visible = false end
+		return
+	end
 
-	local angleIncrement = math.pi * 2 / CircleSegments
+	local char = LP.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+
+	local center = hrp.Position
+	local cam = workspace.CurrentCamera
+	local step = (math.pi * 2) / CircleSegments
+	local radius = vendingRadius
+
 	for i = 1, CircleSegments do
-		local theta1 = angleIncrement * (i - 1)
-		local theta2 = angleIncrement * i
-
-		local x1 = center.X + math.cos(theta1) * CircleRadius
-		local z1 = center.Z + math.sin(theta1) * CircleRadius
-		local x2 = center.X + math.cos(theta2) * CircleRadius
-		local z2 = center.Z + math.sin(theta2) * CircleRadius
-
-		local pos1 = Vector3.new(x1, center.Y, z1)
-		local pos2 = Vector3.new(x2, center.Y, z2)
-
-		local screen1, onScreen1 = workspace.CurrentCamera:WorldToViewportPoint(pos1)
-		local screen2, onScreen2 = workspace.CurrentCamera:WorldToViewportPoint(pos2)
-
 		local line = CircleLines[i]
-		line.From = Vector2.new(screen1.X, screen1.Y)
-		line.To = Vector2.new(screen2.X, screen2.Y)
-		line.Visible = onScreen1 and onScreen2
+		local a1 = (i - 1) * step
+		local a2 = i * step
+		local p1 = center + Vector3.new(math.cos(a1) * radius, 0, math.sin(a1) * radius)
+		local p2 = center + Vector3.new(math.cos(a2) * radius, 0, math.sin(a2) * radius)
+		local v1, on1 = cam:WorldToViewportPoint(p1)
+		local v2, on2 = cam:WorldToViewportPoint(p2)
+		if on1 and on2 then
+			line.From = Vector2.new(v1.X, v1.Y)
+			line.To = Vector2.new(v2.X, v2.Y)
+			line.Visible = true
+		else
+			line.Visible = false
+		end
 	end
 end
 
@@ -2357,9 +2350,9 @@ releaseLabel = function(lab)
 	table.insert(labelPool, lab)
 end
 
-local ESP_UPDATE_INTERVAL = 0.3
+local espupdateinterval = 0.3
 local espScanAccumulator = 0
-local MAX_ESP_LABELS = 2
+local maxesplabels = 2
 
 local _candidates = {}
 local _enforceList = {}
@@ -2379,7 +2372,7 @@ end
 
 local function enforceMaxEsp()
 	local count = getTableSize(espLabels)
-	if count <= MAX_ESP_LABELS then return end
+	if count <= maxesplabels then return end
 
 	local hrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
 	if not hrp then return end
@@ -2406,7 +2399,7 @@ local function enforceMaxEsp()
 
 	table.sort(_enforceList, function(a, b) return a.distSq > b.distSq end)
 
-	while getTableSize(espLabels) > MAX_ESP_LABELS do
+	while getTableSize(espLabels) > maxesplabels do
 		local entry = table.remove(_enforceList, 1)
 		if not entry then break end
 		local v = entry.v
@@ -2422,7 +2415,11 @@ local function EspScannerLoop()
 	while espEnabled and espScannerActive do
 		local newCache = {}
 		local islands = WS:FindFirstChild("Islands")
-		if islands then
+		local char = LP.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if islands and hrp then
+			local hrpPos = hrp.Position
+			local radiusSq = vendingRadius * vendingRadius
 			for _, island in ipairs(islands:GetChildren()) do
 				if not espEnabled then break end
 				local blocks = island:FindFirstChild("Blocks")
@@ -2433,7 +2430,13 @@ local function EspScannerLoop()
 						if v.Name == "vendingMachine1" or v.Name == "vendingMachine" or v.Name == "vendingMachineIndustrial" then
 							local part = v:FindFirstChildWhichIsA("BasePart") or v.PrimaryPart
 							if part then
-								table.insert(newCache, {v = v, part = part})
+								local pPos = part.Position
+								local dx = pPos.X - hrpPos.X
+								local dy = pPos.Y - hrpPos.Y
+								local dz = pPos.Z - hrpPos.Z
+								if (dx*dx + dy*dy + dz*dz) <= radiusSq then
+									table.insert(newCache, {v = v, part = part})
+								end
 							end
 						end
 						if i % 300 == 0 then task.wait() end
@@ -2443,7 +2446,7 @@ local function EspScannerLoop()
 			end
 		end
 		cachedVendingMachines = newCache
-		task.wait(3)
+		task.wait(1)
 	end
 	espScannerActive = false
 end
@@ -2452,7 +2455,7 @@ local function UpdateVendingESP_Scan(deltaTime)
 	if not espEnabled then return end
 	
 	espScanAccumulator = espScanAccumulator + (deltaTime or 0)
-	if espScanAccumulator < ESP_UPDATE_INTERVAL then
+	if espScanAccumulator < espupdateinterval then
 		return
 	end
 	espScanAccumulator = 0
@@ -2493,9 +2496,9 @@ local function UpdateVendingESP_Scan(deltaTime)
 	end
 
 	local activeVendings = {}
-	local limit = math.min(#candidates, MAX_ESP_LABELS)
+	local limit = math.min(#candidates, maxesplabels)
 	
-	if #candidates > MAX_ESP_LABELS then
+	if #candidates > maxesplabels then
 		table.sort(candidates, function(a,b) return a.distSq < b.distSq end)
 	end
 	
@@ -2706,6 +2709,7 @@ SettingsTab:CreateToggle({
 	Callback = function(Value)
 		espEnabled = Value
 		if not espEnabled then
+			cachedVendingMachines = {}
 			espScannerActive = false
 			for _, labelData in pairs(espLabels) do
 				releaseLabel(labelData.label)
@@ -2726,10 +2730,10 @@ SettingsTab:CreateSlider({
 	Range = {1, 100},
 	Increment = 1,
 	Suffix = " labels",
-	CurrentValue = MAX_ESP_LABELS,
+	CurrentValue = maxesplabels,
 	Flag = "MaxESPLabelsSlider",
 	Callback = function(Value)
-		MAX_ESP_LABELS = math.max(0, math.floor(Value))
+		maxesplabels = math.max(0, math.floor(Value))
 		enforceMaxEsp()
 	end,
 })
@@ -2790,7 +2794,6 @@ local VendingRadiusSlider = SettingsTab:CreateSlider({
 	Callback = function(Value)
 		if not ignoreRadiusEnabled then
 			vendingRadius = Value
-			CircleRadius = Value
 		end
 	end,
 })
@@ -2803,11 +2806,9 @@ SettingsTab:CreateToggle({
 		ignoreRadiusEnabled = Value
 		if Value then
 			vendingRadius = 10000
-			CircleRadius = 10000
 			if VendingRadiusSlider.Disable then VendingRadiusSlider:Disable() end
 		else
 			vendingRadius = 15
-			CircleRadius = 15
 			if VendingRadiusSlider.Enable then VendingRadiusSlider:Enable() end
 		end
 	end,
@@ -2857,8 +2858,8 @@ local SeasonOptions = {"summer", "winter", "fall"}
 local SeasonChoice = "summer"
 
 local SeasonPresses = {}
-local PRESS_THRESHOLD = 10
-local PRESS_WINDOW = 5
+local pressthreshold = 10
+local presswindow = 5
 
 local SeasonDropdown = SettingsTab:CreateDropdown({
 	Name = "Season",
@@ -2877,14 +2878,14 @@ local SetSeasonButton = SettingsTab:CreateButton({
 		local currentTime = tick()
 		
 		for i = #SeasonPresses, 1, -1 do
-			if currentTime - SeasonPresses[i] > PRESS_WINDOW then
+			if currentTime - SeasonPresses[i] > presswindow then
 				table.remove(SeasonPresses, i)
 			end
 		end
 		
 		table.insert(SeasonPresses, currentTime)
 		
-		if #SeasonPresses >= PRESS_THRESHOLD then
+		if #SeasonPresses >= pressthreshold then
 			Rayfield:Notify({Title = "Secret Message", Content = "Jolly is a femboy", Duration = 5, Image = 11401835376})
 			SeasonPresses = {}
 		else
